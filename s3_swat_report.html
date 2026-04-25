@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S3 SWAT — Cost Audit Report</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:        #080808;
+    --surface:   #0f0f0f;
+    --border:    #1e1e1e;
+    --border2:   #2a2a2a;
+    --text:      #c8c8c8;
+    --dim:       #555;
+    --green:     #00ff88;
+    --red:       #ff4444;
+    --yellow:    #ffcc00;
+    --cyan:      #00d4ff;
+    --mono:      'JetBrains Mono', monospace;
+    --sans:      'Syne', sans-serif;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.6;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── Scanline overlay ── */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.03) 2px,
+      rgba(0,0,0,0.03) 4px
+    );
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  /* ── Header ── */
+  .header {
+    border-bottom: 1px solid var(--border2);
+    padding: 28px 48px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky; top: 0;
+    background: rgba(8,8,8,0.95);
+    backdrop-filter: blur(12px);
+    z-index: 100;
+    animation: fadeDown 0.4s ease both;
+  }
+
+  .logo {
+    font-family: var(--sans);
+    font-size: 20px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    color: #fff;
+  }
+  .logo span { color: var(--green); }
+
+  .meta {
+    font-size: 11px;
+    color: var(--dim);
+    text-align: right;
+  }
+  .meta strong { color: var(--text); }
+
+  /* ── Health Score Hero ── */
+  .hero {
+    padding: 64px 48px 48px;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 64px;
+    align-items: center;
+    animation: fadeUp 0.5s 0.1s ease both;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .score-ring {
+    position: relative;
+    width: 140px; height: 140px;
+    flex-shrink: 0;
+  }
+  .score-ring svg {
+    width: 140px; height: 140px;
+    transform: rotate(-90deg);
+  }
+  .score-ring .track {
+    fill: none;
+    stroke: var(--border2);
+    stroke-width: 6;
+  }
+  .score-ring .arc {
+    fill: none;
+    stroke: #ff4444;
+    stroke-width: 6;
+    stroke-linecap: round;
+    stroke-dasharray: 339.3;
+    stroke-dashoffset: 288.4;
+    filter: drop-shadow(0 0 6px #ff4444);
+    transition: stroke-dashoffset 1.2s cubic-bezier(0.16,1,0.3,1);
+  }
+  .score-num {
+    position: absolute;
+    inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    font-family: var(--sans);
+    font-size: 36px;
+    font-weight: 800;
+    color: #ff4444;
+    line-height: 1;
+  }
+  .score-num small {
+    font-size: 11px;
+    color: var(--dim);
+    font-family: var(--mono);
+    font-weight: 400;
+    margin-top: 4px;
+    letter-spacing: 1px;
+  }
+
+  .hero-stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 24px;
+  }
+
+  .stat-card {
+    border: 1px solid var(--border2);
+    border-radius: 2px;
+    padding: 20px 24px;
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.2s;
+  }
+  .stat-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+  }
+  .stat-card.red::before  { background: var(--red); }
+  .stat-card.yellow::before { background: var(--yellow); }
+  .stat-card.cyan::before { background: var(--cyan); }
+
+  .stat-label {
+    font-size: 10px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--dim);
+    margin-bottom: 8px;
+  }
+  .stat-value {
+    font-family: var(--sans);
+    font-size: 28px;
+    font-weight: 700;
+    color: #fff;
+    line-height: 1;
+  }
+  .stat-sub {
+    font-size: 11px;
+    color: var(--dim);
+    margin-top: 6px;
+  }
+
+  /* ── Sections ── */
+  .sections { padding: 0 48px 64px; }
+
+  .section {
+    margin-top: 48px;
+    animation: fadeUp 0.4s ease both;
+  }
+  .section:nth-child(1) { animation-delay: 0.2s; }
+  .section:nth-child(2) { animation-delay: 0.3s; }
+  .section:nth-child(3) { animation-delay: 0.4s; }
+
+  .section-header {
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .scenario-tag {
+    font-size: 10px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--dim);
+    font-family: var(--mono);
+  }
+
+  .section-title {
+    font-family: var(--sans);
+    font-size: 16px;
+    font-weight: 700;
+    color: #fff;
+  }
+
+  .section-badge {
+    margin-left: auto;
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 2px;
+    font-family: var(--mono);
+  }
+  .badge-red    { background: rgba(255,68,68,0.12); color: var(--red); border: 1px solid rgba(255,68,68,0.3); }
+  .badge-green  { background: rgba(0,255,136,0.08); color: var(--green); border: 1px solid rgba(0,255,136,0.2); }
+  .badge-yellow { background: rgba(255,204,0,0.10); color: var(--yellow); border: 1px solid rgba(255,204,0,0.25); }
+
+  /* ── Tables ── */
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+    border: 1px solid var(--border);
+  }
+  .data-table th {
+    text-align: left;
+    font-size: 10px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--dim);
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border2);
+    background: var(--surface);
+    font-weight: 400;
+  }
+  .data-table td {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+  .data-table tr:last-child td { border-bottom: none; }
+  .data-table tr:hover td { background: rgba(255,255,255,0.02); }
+
+  .mono     { font-family: var(--mono); }
+  .center   { text-align: center; }
+  .key-cell { color: var(--cyan); font-size: 12px; max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cost     { color: var(--red); }
+  .good     { color: var(--green); }
+  .bad      { color: var(--red); }
+  .nat      { color: var(--yellow); }
+  .empty-row { text-align: center; color: var(--green); padding: 20px; }
+
+  /* ── Efficiency panel ── */
+  .eff-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+
+  .eff-block {
+    border: 1px solid var(--border2);
+    padding: 20px 24px;
+    border-radius: 2px;
+  }
+
+  .eff-label {
+    font-size: 10px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--dim);
+    margin-bottom: 8px;
+  }
+
+  .eff-bar-wrap {
+    background: var(--border);
+    border-radius: 2px;
+    height: 6px;
+    margin-top: 10px;
+    overflow: hidden;
+  }
+
+  .eff-bar {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 1.4s cubic-bezier(0.16,1,0.3,1);
+  }
+
+  .eff-value {
+    font-family: var(--sans);
+    font-size: 32px;
+    font-weight: 700;
+    color: #fff;
+    line-height: 1;
+  }
+
+  /* ── Diff block ── */
+  .diff-block {
+    background: var(--surface);
+    border: 1px solid var(--border2);
+    border-left: 3px solid var(--cyan);
+    padding: 16px 20px;
+    margin-top: 16px;
+    font-size: 12px;
+    line-height: 1.9;
+  }
+  .diff-block .minus { color: var(--red); }
+  .diff-block .plus  { color: var(--green); }
+  .diff-block .neutral { color: var(--dim); }
+
+  /* ── Footer ── */
+  .footer {
+    border-top: 1px solid var(--border);
+    padding: 24px 48px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 11px;
+    color: var(--dim);
+  }
+
+  /* ── Animations ── */
+  @keyframes fadeDown {
+    from { opacity: 0; transform: translateY(-8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+</style>
+</head>
+<body>
+
+<!-- ── HEADER ────────────────────────────────────────────────── -->
+<header class="header">
+  <div class="logo">S3<span>SWAT</span></div>
+  <div class="meta">
+    <strong>Bucket:</strong> prod-user-assets &nbsp;·&nbsp;
+    <strong>Region:</strong> us-east-1 &nbsp;·&nbsp;
+    2026-04-25 15:26 UTC
+  </div>
+</header>
+
+<!-- ── HERO ──────────────────────────────────────────────────── -->
+<section class="hero">
+  <div class="score-ring">
+    <svg viewBox="0 0 120 120">
+      <circle class="track" cx="60" cy="60" r="54"/>
+      <circle class="arc"   cx="60" cy="60" r="54"/>
+    </svg>
+    <div class="score-num">
+      15
+      <small>HEALTH</small>
+    </div>
+  </div>
+
+  <div class="hero-stats">
+    <div class="stat-card red">
+      <div class="stat-label">Ghost Data Found</div>
+      <div class="stat-value">4</div>
+      <div class="stat-sub">4.0 GB invisible &amp; billed</div>
+    </div>
+    <div class="stat-card yellow">
+      <div class="stat-label">Network Leaks</div>
+      <div class="stat-value">2</div>
+      <div class="stat-sub">$0.045 / GB via NAT</div>
+    </div>
+    <div class="stat-card cyan">
+      <div class="stat-label">Tiering Waste</div>
+      <div class="stat-value">67.2%</div>
+      <div class="stat-sub">78.4% of objects &lt; 128KB</div>
+    </div>
+  </div>
+</section>
+
+<!-- ── SECTIONS ──────────────────────────────────────────────── -->
+<div class="sections">
+
+  <!-- Scenario 1: Ghost Hunter -->
+  <div class="section">
+    <div class="section-header">
+      <span class="scenario-tag">Scenario 01</span>
+      <span class="section-title">Ghost Hunter — Incomplete Multipart Uploads</span>
+      <span class="section-badge badge-red">
+        4 leaks · $0.09/mo
+      </span>
+    </div>
+
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Object Key</th>
+          <th style="text-align:center">Age</th>
+          <th style="text-align:center">Size</th>
+          <th style="text-align:center">Monthly Cost</th>
+        </tr>
+      </thead>
+      <tbody>
+        
+        <tr>
+          <td class="mono key-cell">backups/db-export-2024-11-12.sql.gz</td>
+          <td class="mono center">164d</td>
+          <td class="mono center">524288.0 KB</td>
+          <td class="mono center cost">$0.12/mo</td>
+        </tr>
+        <tr>
+          <td class="mono key-cell">uploads/user-video-raw/intake_20241209.mp4</td>
+          <td class="mono center">137d</td>
+          <td class="mono center">1048576.0 KB</td>
+          <td class="mono center cost">$0.023/mo</td>
+        </tr>
+        <tr>
+          <td class="mono key-cell">logs/archive/telemetry-batch-jan2025.parquet</td>
+          <td class="mono center">107d</td>
+          <td class="mono center">2097152.0 KB</td>
+          <td class="mono center cost">$0.048/mo</td>
+        </tr>
+        <tr>
+          <td class="mono key-cell">staging/model-weights/checkpoint_v3.bin</td>
+          <td class="mono center">83d</td>
+          <td class="mono center">524288.0 KB</td>
+          <td class="mono center cost">$0.012/mo</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="diff-block"><span class="minus">- versioning_policy: none (uploading forever)</span><br><span class="plus">+ lifecycle_policy: abort_incomplete_multipart_upload after 7 days</span><br><span class="neutral">  estimated_saving: $0.09/mo</span></div>
+  </div>
+
+  <!-- Scenario 2: Network Scout -->
+  <div class="section">
+    <div class="section-header">
+      <span class="scenario-tag">Scenario 02</span>
+      <span class="section-title">Network Scout — VPC Endpoint Audit</span>
+      <span class="section-badge badge-red">
+        2 VPC missing S3 endpoint
+      </span>
+    </div>
+
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>VPC ID</th>
+          <th style="text-align:center">NAT Gateway</th>
+          <th style="text-align:center">S3 Endpoint</th>
+          <th style="text-align:center">Data Cost</th>
+        </tr>
+      </thead>
+      <tbody>
+        
+        <tr>
+          <td class="mono">vpc-0a1b2c3d4e5f</td>
+          <td class="mono center nat">⚠ Present</td>
+          <td class="mono center bad">✗ Missing</td>
+          <td class="mono center cost">$0.045/GB</td>
+        </tr>
+        <tr>
+          <td class="mono">vpc-1f2e3d4c5b6a</td>
+          <td class="mono center nat">⚠ Present</td>
+          <td class="mono center bad">✗ Missing</td>
+          <td class="mono center cost">$0.045/GB</td>
+        </tr>
+        <tr>
+          <td class="mono">vpc-9z8y7x6w5v4u</td>
+          <td class="mono center nat">—</td>
+          <td class="mono center good">✓ Yes</td>
+          <td class="mono center cost">$0.00</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="diff-block"><span class="minus">- s3_traffic_route: NAT Gateway ($0.045/GB processing)</span><br><span class="plus">+ s3_traffic_route: Gateway VPC Endpoint ($0.00)</span><br><span class="neutral">  action: aws ec2 create-vpc-endpoint --vpc-endpoint-type Gateway --service-name com.amazonaws.us-east-1.s3</span></div>
+  </div>
+
+  <!-- Scenario 3: Efficiency Audit -->
+  <div class="section">
+    <div class="section-header">
+      <span class="scenario-tag">Scenario 03</span>
+      <span class="section-title">Efficiency Audit — Small File 128KB Tax</span>
+      <span class="section-badge badge-red">
+        STAY IN STANDARD
+      </span>
+    </div>
+
+    <div class="eff-grid">
+      <div class="eff-block">
+        <div class="eff-label">Small Objects (&lt;128 KB)</div>
+        <div class="eff-value">78.4%</div>
+        <div class="eff-bar-wrap">
+          <div class="eff-bar" id="small-bar" style="width:0%;background:var(--red);"></div>
+        </div>
+      </div>
+      <div class="eff-block">
+        <div class="eff-label">Billed-vs-Actual Bloat</div>
+        <div class="eff-value">67.2%</div>
+        <div class="eff-bar-wrap">
+          <div class="eff-bar" id="waste-bar" style="width:0%;background:var(--red);"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="diff-block" style="margin-top:16px">
+      <span class="neutral">  # Recommendation</span><br>
+      <span class="minus">- tier: IntelligentTiering  # Will INCREASE cost for tiny files</span><br><span class="plus">+ tier: Standard           # Cheapest option when obj_size &lt; 128KB</span>
+    </div>
+  </div>
+
+</div><!-- /sections -->
+
+<!-- ── FOOTER ─────────────────────────────────────────────────── -->
+<footer class="footer">
+  <span>Generated by <strong style="color:#fff">s3-swat</strong> CLI · Read-Only scan · No data was modified</span>
+  <span>Total issues found: <strong style="color:var(--red)">7</strong></span>
+</footer>
+
+<script>
+  // Animate bars after page load
+  window.addEventListener('load', () => {
+    setTimeout(() => {
+      const small = document.getElementById('small-bar');
+      const waste = document.getElementById('waste-bar');
+      if (small) small.style.width = '78.4%';
+      if (waste) waste.style.width = '67.2%';
+    }, 300);
+  });
+</script>
+
+</body>
+</html>

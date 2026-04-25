@@ -1,0 +1,1108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S3 SWAT — Cost Audit Dashboard</title>
+<meta name="description" content="S3 SWAT: Real-time S3 cost audit — Ghost Hunter, Network Scout, Efficiency Audit">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:        #080808;
+    --surface:   #0f0f0f;
+    --border:    #1e1e1e;
+    --border2:   #2a2a2a;
+    --text:      #c8c8c8;
+    --dim:       #555;
+    --green:     #00ff88;
+    --red:       #ff4444;
+    --yellow:    #ffcc00;
+    --cyan:      #00d4ff;
+    --mono:      'JetBrains Mono', monospace;
+    --sans:      'Syne', sans-serif;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.6;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── Scanline overlay ── */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.03) 2px,
+      rgba(0,0,0,0.03) 4px
+    );
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  /* ── Header ── */
+  .header {
+    border-bottom: 1px solid var(--border2);
+    padding: 28px 48px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky; top: 0;
+    background: rgba(8,8,8,0.95);
+    backdrop-filter: blur(12px);
+    z-index: 100;
+    animation: fadeDown 0.4s ease both;
+  }
+
+  .logo {
+    font-family: var(--sans);
+    font-size: 20px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    color: #fff;
+  }
+  .logo span { color: var(--green); }
+
+  .meta {
+    font-size: 11px;
+    color: var(--dim);
+    text-align: right;
+  }
+  .meta strong { color: var(--text); }
+
+  /* ── Scan Form ── */
+  .scan-form-wrap {
+    padding: 48px;
+    border-bottom: 1px solid var(--border);
+    animation: fadeUp 0.4s ease both;
+  }
+
+  .scan-form-title {
+    font-family: var(--sans);
+    font-size: 16px;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 20px;
+  }
+
+  .scan-form {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr auto;
+    gap: 12px;
+    align-items: end;
+  }
+
+  .form-group { display: flex; flex-direction: column; gap: 6px; }
+
+  .form-group label {
+    font-size: 10px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--dim);
+  }
+
+  .form-group input,
+  .form-group select {
+    background: var(--surface);
+    border: 1px solid var(--border2);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 10px 14px;
+    border-radius: 2px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  .form-group input:focus,
+  .form-group select:focus {
+    border-color: var(--cyan);
+  }
+  .form-group input::placeholder {
+    color: var(--dim);
+  }
+
+  .btn-scan {
+    background: var(--green);
+    color: #000;
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    border: none;
+    padding: 10px 24px;
+    border-radius: 2px;
+    cursor: pointer;
+    transition: opacity 0.2s, transform 0.1s;
+    white-space: nowrap;
+  }
+  .btn-scan:hover { opacity: 0.85; }
+  .btn-scan:active { transform: scale(0.97); }
+  .btn-scan:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  .creds-toggle {
+    grid-column: 1 / -1;
+    font-size: 11px;
+    color: var(--cyan);
+    cursor: pointer;
+    user-select: none;
+    margin-top: 4px;
+  }
+  .creds-toggle:hover { text-decoration: underline; }
+
+  .creds-fields {
+    grid-column: 1 / -1;
+    display: none;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 12px;
+  }
+  .creds-fields.open { display: grid; }
+
+  /* ── Loading overlay ── */
+  .scan-loading {
+    display: none;
+    grid-column: 1 / -1;
+    text-align: center;
+    padding: 24px;
+    font-size: 12px;
+    color: var(--cyan);
+  }
+  .scan-loading.active { display: block; }
+
+  .spinner {
+    display: inline-block;
+    width: 16px; height: 16px;
+    border: 2px solid var(--border2);
+    border-top-color: var(--cyan);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    vertical-align: middle;
+    margin-right: 8px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Error banner ── */
+  .error-banner {
+    display: none;
+    padding: 12px 48px;
+    background: rgba(255,68,68,0.08);
+    border-bottom: 1px solid rgba(255,68,68,0.2);
+    color: var(--red);
+    font-size: 12px;
+  }
+  .error-banner.active { display: block; }
+
+  /* ── Health Score Hero ── */
+  .hero {
+    padding: 64px 48px 48px;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 64px;
+    align-items: center;
+    animation: fadeUp 0.5s 0.1s ease both;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .score-ring {
+    position: relative;
+    width: 140px; height: 140px;
+    flex-shrink: 0;
+  }
+  .score-ring svg {
+    width: 140px; height: 140px;
+    transform: rotate(-90deg);
+  }
+  .score-ring .track {
+    fill: none;
+    stroke: var(--border2);
+    stroke-width: 6;
+  }
+  .score-ring .arc {
+    fill: none;
+    stroke-width: 6;
+    stroke-linecap: round;
+    stroke-dasharray: 339.3;
+    stroke-dashoffset: 339.3;
+    transition: stroke-dashoffset 1.2s cubic-bezier(0.16,1,0.3,1);
+  }
+  .score-num {
+    position: absolute;
+    inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    font-family: var(--sans);
+    font-size: 36px;
+    font-weight: 800;
+    line-height: 1;
+  }
+  .score-num small {
+    font-size: 11px;
+    color: var(--dim);
+    font-family: var(--mono);
+    font-weight: 400;
+    margin-top: 4px;
+    letter-spacing: 1px;
+  }
+
+  .hero-stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 24px;
+  }
+
+  .stat-card {
+    border: 1px solid var(--border2);
+    border-radius: 2px;
+    padding: 20px 24px;
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.2s;
+  }
+  .stat-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+  }
+  .stat-card.red::before  { background: var(--red); }
+  .stat-card.yellow::before { background: var(--yellow); }
+  .stat-card.cyan::before { background: var(--cyan); }
+
+  .stat-label {
+    font-size: 10px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--dim);
+    margin-bottom: 8px;
+  }
+  .stat-value {
+    font-family: var(--sans);
+    font-size: 28px;
+    font-weight: 700;
+    color: #fff;
+    line-height: 1;
+  }
+  .stat-sub {
+    font-size: 11px;
+    color: var(--dim);
+    margin-top: 6px;
+  }
+
+  /* ── Sections ── */
+  .sections { padding: 0 48px 64px; }
+
+  .section {
+    margin-top: 48px;
+    animation: fadeUp 0.4s ease both;
+  }
+  .section:nth-child(1) { animation-delay: 0.2s; }
+  .section:nth-child(2) { animation-delay: 0.3s; }
+  .section:nth-child(3) { animation-delay: 0.4s; }
+
+  .section-header {
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .scenario-tag {
+    font-size: 10px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--dim);
+    font-family: var(--mono);
+  }
+
+  .section-title {
+    font-family: var(--sans);
+    font-size: 16px;
+    font-weight: 700;
+    color: #fff;
+  }
+
+  .section-badge {
+    margin-left: auto;
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 2px;
+    font-family: var(--mono);
+  }
+  .badge-red    { background: rgba(255,68,68,0.12); color: var(--red); border: 1px solid rgba(255,68,68,0.3); }
+  .badge-green  { background: rgba(0,255,136,0.08); color: var(--green); border: 1px solid rgba(0,255,136,0.2); }
+  .badge-yellow { background: rgba(255,204,0,0.10); color: var(--yellow); border: 1px solid rgba(255,204,0,0.25); }
+
+  /* ── Tables ── */
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+    border: 1px solid var(--border);
+  }
+  .data-table th {
+    text-align: left;
+    font-size: 10px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--dim);
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border2);
+    background: var(--surface);
+    font-weight: 400;
+  }
+  .data-table td {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+  .data-table tr:last-child td { border-bottom: none; }
+  .data-table tr:hover td { background: rgba(255,255,255,0.02); }
+
+  .mono     { font-family: var(--mono); }
+  .center   { text-align: center; }
+  .key-cell { color: var(--cyan); font-size: 12px; max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cost     { color: var(--red); }
+  .good     { color: var(--green); }
+  .bad      { color: var(--red); }
+  .nat      { color: var(--yellow); }
+  .empty-row { text-align: center; color: var(--green); padding: 20px; }
+
+  /* ── Efficiency panel ── */
+  .eff-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 16px;
+  }
+
+  .eff-block {
+    border: 1px solid var(--border2);
+    padding: 20px 24px;
+    border-radius: 2px;
+  }
+
+  .eff-label {
+    font-size: 10px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--dim);
+    margin-bottom: 8px;
+  }
+
+  .eff-bar-wrap {
+    background: var(--border);
+    border-radius: 2px;
+    height: 6px;
+    margin-top: 10px;
+    overflow: hidden;
+  }
+
+  .eff-bar {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 1.4s cubic-bezier(0.16,1,0.3,1);
+  }
+
+  .eff-value {
+    font-family: var(--sans);
+    font-size: 32px;
+    font-weight: 700;
+    color: #fff;
+    line-height: 1;
+  }
+
+  /* ── Diff block ── */
+  .diff-block {
+    background: var(--surface);
+    border: 1px solid var(--border2);
+    border-left: 3px solid var(--cyan);
+    padding: 16px 20px;
+    margin-top: 16px;
+    font-size: 12px;
+    line-height: 1.9;
+  }
+  .diff-block .minus { color: var(--red); }
+  .diff-block .plus  { color: var(--green); }
+  .diff-block .neutral { color: var(--dim); }
+
+  /* ── History sidebar ── */
+  .history-toggle {
+    position: fixed;
+    top: 80px; right: 0;
+    background: var(--surface);
+    border: 1px solid var(--border2);
+    border-right: none;
+    color: var(--dim);
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 1px;
+    padding: 8px 12px;
+    cursor: pointer;
+    z-index: 101;
+    writing-mode: vertical-rl;
+    border-radius: 4px 0 0 4px;
+    transition: color 0.2s;
+  }
+  .history-toggle:hover { color: var(--cyan); }
+
+  .history-panel {
+    position: fixed;
+    top: 0; right: -340px;
+    width: 340px;
+    height: 100vh;
+    background: var(--surface);
+    border-left: 1px solid var(--border2);
+    z-index: 200;
+    padding: 28px 20px;
+    overflow-y: auto;
+    transition: right 0.3s cubic-bezier(0.16,1,0.3,1);
+  }
+  .history-panel.open { right: 0; }
+
+  .history-title {
+    font-family: var(--sans);
+    font-size: 14px;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 16px;
+  }
+
+  .history-item {
+    border: 1px solid var(--border);
+    padding: 12px 14px;
+    margin-bottom: 8px;
+    border-radius: 2px;
+    cursor: pointer;
+    transition: border-color 0.2s;
+  }
+  .history-item:hover { border-color: var(--cyan); }
+  .history-item .hi-bucket {
+    font-size: 12px;
+    color: var(--cyan);
+    margin-bottom: 4px;
+  }
+  .history-item .hi-meta {
+    font-size: 10px;
+    color: var(--dim);
+  }
+  .history-item .hi-score {
+    font-family: var(--sans);
+    font-weight: 700;
+    float: right;
+    font-size: 18px;
+  }
+
+  .history-close {
+    position: absolute;
+    top: 12px; right: 12px;
+    background: none;
+    border: none;
+    color: var(--dim);
+    font-size: 18px;
+    cursor: pointer;
+  }
+  .history-close:hover { color: var(--red); }
+
+  /* ── Footer ── */
+  .footer {
+    border-top: 1px solid var(--border);
+    padding: 24px 48px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 11px;
+    color: var(--dim);
+  }
+
+  /* ── Report container (hidden until scan completes) ── */
+  .report-container { display: none; }
+  .report-container.active { display: block; }
+
+  /* ── Animations ── */
+  @keyframes fadeDown {
+    from { opacity: 0; transform: translateY(-8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+</style>
+</head>
+<body>
+
+<!-- ── HEADER ────────────────────────────────────────────────── -->
+<header class="header">
+  <div class="logo">S3<span>SWAT</span></div>
+  <div class="meta" id="header-meta">
+    <strong>Status:</strong> Ready to scan
+  </div>
+</header>
+
+<!-- ── HISTORY SIDEBAR ──────────────────────────────────────── -->
+<button class="history-toggle" id="history-toggle-btn">HISTORY</button>
+<div class="history-panel" id="history-panel">
+  <button class="history-close" id="history-close-btn">&times;</button>
+  <div class="history-title">Scan History</div>
+  <div id="history-list"></div>
+</div>
+
+<!-- ── SCAN FORM ─────────────────────────────────────────────── -->
+<div class="scan-form-wrap">
+  <div class="scan-form-title">▸ New Scan</div>
+  <form class="scan-form" id="scan-form">
+    <div class="form-group">
+      <label for="bucket-input">Bucket</label>
+      <input type="text" id="bucket-input" placeholder="my-bucket-name" required>
+    </div>
+    <div class="form-group">
+      <label for="region-select">Region</label>
+      <select id="region-select">
+        <option value="us-east-1">us-east-1</option>
+        <option value="us-east-2">us-east-2</option>
+        <option value="us-west-1">us-west-1</option>
+        <option value="us-west-2">us-west-2</option>
+        <option value="eu-west-1">eu-west-1</option>
+        <option value="eu-west-2">eu-west-2</option>
+        <option value="eu-central-1">eu-central-1</option>
+        <option value="ap-southeast-1">ap-southeast-1</option>
+        <option value="ap-northeast-1">ap-northeast-1</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label for="max-objects-input">Max Objects</label>
+      <input type="number" id="max-objects-input" value="10000" min="100" max="100000">
+    </div>
+    <div class="form-group" style="visibility:hidden">
+      <label>&nbsp;</label>
+      <input type="text" disabled>
+    </div>
+    <button type="submit" class="btn-scan" id="scan-btn">Run Scan</button>
+
+    <div class="creds-toggle" id="creds-toggle">▸ AWS Credentials (optional — uses server env by default)</div>
+    <div class="creds-fields" id="creds-fields">
+      <div class="form-group">
+        <label for="ak-input">Access Key ID</label>
+        <input type="text" id="ak-input" placeholder="AKIA...">
+      </div>
+      <div class="form-group">
+        <label for="sk-input">Secret Access Key</label>
+        <input type="password" id="sk-input" placeholder="••••••••">
+      </div>
+      <div class="form-group">
+        <label for="st-input">Session Token</label>
+        <input type="text" id="st-input" placeholder="optional">
+      </div>
+    </div>
+
+    <div class="scan-loading" id="scan-loading">
+      <span class="spinner"></span> Scanning bucket… this may take a moment
+    </div>
+  </form>
+</div>
+
+<!-- ── ERROR BANNER ──────────────────────────────────────────── -->
+<div class="error-banner" id="error-banner"></div>
+
+<!-- ── REPORT (hidden until scan completes) ───────────────── -->
+<div class="report-container" id="report-container">
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="score-ring">
+      <svg viewBox="0 0 120 120">
+        <circle class="track" cx="60" cy="60" r="54"/>
+        <circle class="arc" id="score-arc" cx="60" cy="60" r="54"/>
+      </svg>
+      <div class="score-num" id="score-num">
+        —
+        <small>HEALTH</small>
+      </div>
+    </div>
+
+    <div class="hero-stats">
+      <div class="stat-card red">
+        <div class="stat-label">Ghost Data Found</div>
+        <div class="stat-value" id="ghost-count">0</div>
+        <div class="stat-sub" id="ghost-sub">No ghost data</div>
+      </div>
+      <div class="stat-card yellow">
+        <div class="stat-label">Network Leaks</div>
+        <div class="stat-value" id="net-count">0</div>
+        <div class="stat-sub" id="net-sub">$0.00</div>
+      </div>
+      <div class="stat-card cyan">
+        <div class="stat-label">Tiering Waste</div>
+        <div class="stat-value" id="eff-waste">0%</div>
+        <div class="stat-sub" id="eff-sub">0% of objects &lt; 128KB</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTIONS -->
+  <div class="sections">
+
+    <!-- Scenario 1: Ghost Hunter -->
+    <div class="section">
+      <div class="section-header">
+        <span class="scenario-tag">Scenario 01</span>
+        <span class="section-title">Ghost Hunter — Incomplete Multipart Uploads</span>
+        <span class="section-badge" id="ghost-badge">—</span>
+      </div>
+
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Object Key</th>
+            <th style="text-align:center">Age</th>
+            <th style="text-align:center">Size</th>
+            <th style="text-align:center">Monthly Cost</th>
+          </tr>
+        </thead>
+        <tbody id="ghost-tbody">
+          <tr><td colspan="4" class="empty-row">Run a scan to see results</td></tr>
+        </tbody>
+      </table>
+
+      <div class="diff-block" id="ghost-diff" style="display:none"></div>
+    </div>
+
+    <!-- Scenario 2: Network Scout -->
+    <div class="section">
+      <div class="section-header">
+        <span class="scenario-tag">Scenario 02</span>
+        <span class="section-title">Network Scout — VPC Endpoint Audit</span>
+        <span class="section-badge" id="net-badge">—</span>
+      </div>
+
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>VPC ID</th>
+            <th style="text-align:center">NAT Gateway</th>
+            <th style="text-align:center">S3 Endpoint</th>
+            <th style="text-align:center">Data Cost</th>
+          </tr>
+        </thead>
+        <tbody id="net-tbody">
+          <tr><td colspan="4" class="empty-row">Run a scan to see results</td></tr>
+        </tbody>
+      </table>
+
+      <div class="diff-block" id="net-diff" style="display:none"></div>
+    </div>
+
+    <!-- Scenario 3: Efficiency Audit -->
+    <div class="section">
+      <div class="section-header">
+        <span class="scenario-tag">Scenario 03</span>
+        <span class="section-title">Efficiency Audit — Small File 128KB Tax</span>
+        <span class="section-badge" id="eff-badge">—</span>
+      </div>
+
+      <div class="eff-grid">
+        <div class="eff-block">
+          <div class="eff-label">Small Objects (&lt;128 KB)</div>
+          <div class="eff-value" id="eff-small-pct">0%</div>
+          <div class="eff-bar-wrap">
+            <div class="eff-bar" id="small-bar" style="width:0%;background:var(--dim);"></div>
+          </div>
+        </div>
+        <div class="eff-block">
+          <div class="eff-label">Billed-vs-Actual Bloat</div>
+          <div class="eff-value" id="eff-bloat-pct">0%</div>
+          <div class="eff-bar-wrap">
+            <div class="eff-bar" id="waste-bar" style="width:0%;background:var(--dim);"></div>
+          </div>
+        </div>
+        <div class="eff-block">
+          <div class="eff-label">Active Waste ($/mo)</div>
+          <div class="eff-value" id="eff-active-waste">$0.00</div>
+          <div style="font-size:10px; color:var(--dim); margin-top:14px;">Based on 128KB minimum</div>
+        </div>
+      </div>
+
+      <div class="diff-block" id="eff-diff" style="margin-top:16px;display:none"></div>
+    </div>
+
+  </div><!-- /sections -->
+
+  <!-- FOOTER -->
+  <footer class="footer">
+    <span>Generated by <strong style="color:#fff">s3-swat</strong> API · Read-Only scan · No data was modified</span>
+    <span>Total issues found: <strong id="total-issues" style="color:var(--dim)">0</strong></span>
+  </footer>
+
+</div><!-- /report-container -->
+
+<script>
+// ── API base ────────────────────────────────────────────────────────────────
+const API = window.location.origin;
+
+// ── DOM refs ────────────────────────────────────────────────────────────────
+const form          = document.getElementById('scan-form');
+const scanBtn       = document.getElementById('scan-btn');
+const loading       = document.getElementById('scan-loading');
+const errorBanner   = document.getElementById('error-banner');
+const report        = document.getElementById('report-container');
+const headerMeta    = document.getElementById('header-meta');
+const credsToggle   = document.getElementById('creds-toggle');
+const credsFields   = document.getElementById('creds-fields');
+const historyPanel  = document.getElementById('history-panel');
+const historyList   = document.getElementById('history-list');
+
+// ── Credentials toggle ─────────────────────────────────────────────────────
+credsToggle.addEventListener('click', () => {
+  credsFields.classList.toggle('open');
+  credsToggle.textContent = credsFields.classList.contains('open')
+    ? '▾ AWS Credentials (optional)'
+    : '▸ AWS Credentials (optional — uses server env by default)';
+});
+
+// ── History sidebar ─────────────────────────────────────────────────────────
+document.getElementById('history-toggle-btn').addEventListener('click', () => {
+  historyPanel.classList.toggle('open');
+  if (historyPanel.classList.contains('open')) loadHistory();
+});
+document.getElementById('history-close-btn').addEventListener('click', () => {
+  historyPanel.classList.remove('open');
+});
+
+// ── Form submit ─────────────────────────────────────────────────────────────
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const bucket = document.getElementById('bucket-input').value.trim();
+  const region = document.getElementById('region-select').value;
+  const maxObj = parseInt(document.getElementById('max-objects-input').value) || 10000;
+  const ak = document.getElementById('ak-input').value.trim();
+  const sk = document.getElementById('sk-input').value.trim();
+  const st = document.getElementById('st-input').value.trim();
+
+  if (!bucket) return;
+
+  // UI state: scanning
+  scanBtn.disabled = true;
+  loading.classList.add('active');
+  errorBanner.classList.remove('active');
+  report.classList.remove('active');
+
+  const body = {
+    bucket,
+    region,
+    max_objects: maxObj,
+  };
+  if (ak) body.aws_access_key_id = ak;
+  if (sk && sk !== '********') body.aws_secret_access_key = sk;
+  if (st) body.aws_session_token = st;
+
+  try {
+    const res = await fetch(`${API}/api/scan`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+
+    const data = await res.json();
+    renderReport(data);
+
+  } catch (err) {
+    errorBanner.textContent = `✗ Scan failed: ${err.message}`;
+    errorBanner.classList.add('active');
+  } finally {
+    scanBtn.disabled = false;
+    loading.classList.remove('active');
+  }
+});
+
+// ── Render full report ──────────────────────────────────────────────────────
+function renderReport(data) {
+  report.classList.add('active');
+
+  // Header meta
+  headerMeta.innerHTML = `
+    <strong>Bucket:</strong> ${esc(data.bucket)} &nbsp;·&nbsp;
+    <strong>Region:</strong> ${esc(data.region)} &nbsp;·&nbsp;
+    ${data.created_at.replace('T', ' ').substring(0, 19)} UTC
+  `;
+
+  // ── Health score ──────────────────────────────────────────────────────
+  const score = data.health_score;
+  const scoreColor = score >= 80 ? '#00ff88' : score >= 50 ? '#ffcc00' : '#ff4444';
+  const arc = document.getElementById('score-arc');
+  const scoreNum = document.getElementById('score-num');
+
+  arc.style.stroke = scoreColor;
+  arc.style.filter = `drop-shadow(0 0 6px ${scoreColor})`;
+  scoreNum.style.color = scoreColor;
+  scoreNum.innerHTML = `${score}<small>HEALTH</small>`;
+
+  // Animate arc
+  setTimeout(() => {
+    arc.style.strokeDashoffset = 339.3 * (1 - score / 100);
+  }, 100);
+
+  // ── Ghost stats ───────────────────────────────────────────────────────
+  const ghosts = data.ghost_results || [];
+  const ghostCount = ghosts.length;
+  const ghostSizeGB = ghosts.reduce((s, g) => s + (g.size_bytes || 0), 0) / (1024**3);
+  const ghostCost = ghosts.reduce((s, g) => s + (g.monthly_cost || 0), 0);
+
+  document.getElementById('ghost-count').textContent = ghostCount;
+  document.getElementById('ghost-sub').textContent = ghostCount > 0
+    ? `${ghostSizeGB.toFixed(1)} GB invisible & billed`
+    : 'No ghost data found';
+
+  // Ghost table
+  const ghostTbody = document.getElementById('ghost-tbody');
+  if (ghostCount === 0) {
+    ghostTbody.innerHTML = '<tr><td colspan="4" class="empty-row">✓ No ghost data found</td></tr>';
+    document.getElementById('ghost-badge').className = 'section-badge badge-green';
+    document.getElementById('ghost-badge').textContent = 'Clean';
+    document.getElementById('ghost-diff').style.display = 'none';
+  } else {
+    ghostTbody.innerHTML = ghosts.map(g => `
+      <tr>
+        <td class="mono key-cell">${esc(g.key)}</td>
+        <td class="mono center">${g.age_days}d</td>
+        <td class="mono center">${formatBytes(g.size_bytes)}</td>
+        <td class="mono center cost">$${g.monthly_cost.toFixed(3)}/mo</td>
+      </tr>
+    `).join('');
+    document.getElementById('ghost-badge').className = 'section-badge badge-red';
+    document.getElementById('ghost-badge').textContent = `${ghostCount} leak${ghostCount > 1 ? 's' : ''} · $${ghostCost.toFixed(2)}/mo`;
+
+    const ghostDiff = document.getElementById('ghost-diff');
+    ghostDiff.style.display = 'block';
+    ghostDiff.innerHTML = `
+      <span class="minus">- versioning_policy: none (uploading forever)</span><br>
+      <span class="plus">+ lifecycle_policy: abort_incomplete_multipart_upload after 7 days</span><br>
+      <span class="neutral">  estimated_saving: $${ghostCost.toFixed(2)}/mo</span>
+    `;
+  }
+
+  // ── Network stats ─────────────────────────────────────────────────────
+  const nets = data.network_results || [];
+  const netLeaks = nets.filter(n => !n.has_endpoint).length;
+
+  document.getElementById('net-count').textContent = netLeaks;
+  document.getElementById('net-sub').textContent = netLeaks > 0
+    ? '$0.045 / GB via NAT'
+    : '$0.00';
+
+  const netTbody = document.getElementById('net-tbody');
+  if (nets.length === 0) {
+    netTbody.innerHTML = '<tr><td colspan="4" class="empty-row">✓ No VPCs found in region</td></tr>';
+    document.getElementById('net-badge').className = 'section-badge badge-green';
+    document.getElementById('net-badge').textContent = 'Clean';
+    document.getElementById('net-diff').style.display = 'none';
+  } else {
+    netTbody.innerHTML = nets.map(n => `
+      <tr>
+        <td class="mono">${esc(n.vpc_id)}</td>
+        <td class="mono center ${n.has_nat ? 'nat' : ''}">${n.has_nat ? '⚠ Present' : '—'}</td>
+        <td class="mono center ${n.has_endpoint ? 'good' : 'bad'}">${n.has_endpoint ? '✓ Yes' : '✗ Missing'}</td>
+        <td class="mono center cost">${esc(n.potential_saving)}</td>
+      </tr>
+    `).join('');
+
+    if (netLeaks > 0) {
+      document.getElementById('net-badge').className = 'section-badge badge-red';
+      document.getElementById('net-badge').textContent = `${netLeaks} VPC missing S3 endpoint`;
+      const netDiff = document.getElementById('net-diff');
+      netDiff.style.display = 'block';
+      netDiff.innerHTML = `
+        <span class="minus">- s3_traffic_route: NAT Gateway ($0.045/GB processing)</span><br>
+        <span class="plus">+ s3_traffic_route: Gateway VPC Endpoint ($0.00)</span><br>
+        <span class="neutral">  action: aws ec2 create-vpc-endpoint --vpc-endpoint-type Gateway --service-name com.amazonaws.${esc(data.region)}.s3</span>
+      `;
+    } else {
+      document.getElementById('net-badge').className = 'section-badge badge-green';
+      document.getElementById('net-badge').textContent = 'All endpoints present';
+      document.getElementById('net-diff').style.display = 'none';
+    }
+  }
+
+  // ── Efficiency stats ──────────────────────────────────────────────────
+  const eff = data.efficiency_results || {};
+  const smallPct = eff.small_file_pct || 0;
+  const wastePct = eff.waste_ratio_pct || 0;
+  const activeWasteBytes = eff.active_tiering_waste_bytes || 0;
+  const storageClasses = eff.storage_classes || {};
+  const rec = eff.recommendation || 'N/A';
+  
+  // Rough estimate: ~$0.023 per GB/mo
+  const activeWasteGb = activeWasteBytes / (1024 * 1024 * 1024);
+  const activeWasteCost = activeWasteGb * 0.023;
+  document.getElementById('eff-active-waste').textContent = `$${activeWasteCost.toFixed(2)}`;
+  if (activeWasteCost > 0) {
+    document.getElementById('eff-active-waste').style.color = 'var(--red)';
+  } else {
+    document.getElementById('eff-active-waste').style.color = 'var(--green)';
+  }
+
+  document.getElementById('eff-waste').textContent = `${wastePct}%`;
+  document.getElementById('eff-sub').textContent = `${smallPct}% of objects < 128KB`;
+  document.getElementById('eff-small-pct').textContent = `${smallPct}%`;
+  document.getElementById('eff-bloat-pct').textContent = `${wastePct}%`;
+
+  // Badge
+  const effBadge = document.getElementById('eff-badge');
+  if (wastePct > 30) {
+    effBadge.className = 'section-badge badge-red';
+  } else if (wastePct > 10) {
+    effBadge.className = 'section-badge badge-yellow';
+  } else {
+    effBadge.className = 'section-badge badge-green';
+  }
+  effBadge.textContent = rec;
+
+  // Bars
+  const barColor = smallPct > 50 ? 'var(--red)' : 'var(--yellow)';
+  const wasteColor = wastePct > 30 ? 'var(--red)' : 'var(--yellow)';
+  setTimeout(() => {
+    document.getElementById('small-bar').style.cssText = `width:${smallPct}%;background:${barColor}`;
+    document.getElementById('waste-bar').style.cssText = `width:${Math.min(wastePct, 100)}%;background:${wasteColor}`;
+  }, 300);
+
+  // Diff
+  const effDiff = document.getElementById('eff-diff');
+  effDiff.style.display = 'block';
+  
+  let scHtml = '<span class="neutral">  # Current Storage Classes</span><br>';
+  for (const [sc, count] of Object.entries(storageClasses)) {
+    scHtml += `<span class="neutral">    ${sc}: ${count} objects</span><br>`;
+  }
+  scHtml += '<br>';
+
+  if (rec === 'STAY IN STANDARD') {
+    effDiff.innerHTML = scHtml + `
+      <span class="neutral">  # Recommendation</span><br>
+      <span class="minus">- tier: IntelligentTiering  # Will INCREASE cost for tiny files</span><br>
+      <span class="plus">+ tier: Standard           # Cheapest option when obj_size &lt; 128KB</span>
+    `;
+  } else if (rec === 'ELIGIBLE FOR TIERING') {
+    effDiff.innerHTML = scHtml + `
+      <span class="neutral">  # Recommendation</span><br>
+      <span class="plus">+ tier: IntelligentTiering  # Safe. Objects large enough to benefit from tier moves.</span>
+    `;
+  } else {
+    effDiff.innerHTML = scHtml + `
+      <span class="neutral">  # Recommendation</span><br>
+      <span class="neutral">  Review object size distribution per prefix before deciding.</span>
+    `;
+  }
+
+  // ── Total issues ──────────────────────────────────────────────────────
+  const totalIssues = ghostCount + netLeaks + (wastePct > 20 ? 1 : 0);
+  const totalEl = document.getElementById('total-issues');
+  totalEl.textContent = totalIssues;
+  totalEl.style.color = totalIssues > 0 ? 'var(--red)' : 'var(--green)';
+
+  // Scroll to report
+  report.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// ── Load scan history ───────────────────────────────────────────────────────
+async function loadHistory() {
+  try {
+    const res = await fetch(`${API}/api/scans`);
+    if (!res.ok) throw new Error('Failed to load history');
+    const scans = await res.json();
+
+    if (scans.length === 0) {
+      historyList.innerHTML = '<div style="color:var(--dim);font-size:11px;text-align:center;padding:24px">No scans yet</div>';
+      return;
+    }
+
+    historyList.innerHTML = scans.map(s => {
+      const scoreColor = s.health_score >= 80 ? '#00ff88' : s.health_score >= 50 ? '#ffcc00' : '#ff4444';
+      return `
+        <div class="history-item" onclick="loadScan('${s.id}')">
+          <span class="hi-score" style="color:${scoreColor}">${s.health_score}</span>
+          <div class="hi-bucket">${esc(s.bucket)}</div>
+          <div class="hi-meta">${s.region} · ${s.created_at.replace('T', ' ').substring(0, 19)}</div>
+        </div>
+      `;
+    }).join('');
+
+  } catch (e) {
+    historyList.innerHTML = `<div style="color:var(--red);font-size:11px;padding:12px">Error: ${e.message}</div>`;
+  }
+}
+
+async function loadScan(scanId) {
+  try {
+    const res = await fetch(`${API}/api/scan/${scanId}`);
+    if (!res.ok) throw new Error('Scan not found');
+    const data = await res.json();
+    renderReport(data);
+    historyPanel.classList.remove('open');
+  } catch (e) {
+    alert('Failed to load scan: ' + e.message);
+  }
+}
+
+// ── Utilities ───────────────────────────────────────────────────────────────
+function formatBytes(bytes) {
+  if (bytes === 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
+}
+
+function esc(str) {
+  const d = document.createElement('div');
+  d.textContent = str;
+  return d.innerHTML;
+}
+
+// ── On load ─────────────────────────────────────────────────────────────────
+window.addEventListener('load', async () => {
+  try {
+    const res = await fetch(`${API}/api/config`);
+    if (res.ok) {
+      const config = await res.json();
+      
+      // Update SaaS Account ID placeholder
+      const el = document.getElementById('saas-account-id');
+      if (el && config.saas_account_id) {
+        el.textContent = config.saas_account_id;
+      }
+
+      // Pre-fill AWS credentials from server environment
+      const akInput = document.getElementById('ak-input');
+      const skInput = document.getElementById('sk-input');
+      if (akInput && config.aws_access_key_id) {
+        akInput.value = config.aws_access_key_id;
+      }
+      if (skInput && config.has_secret_key) {
+        skInput.value = '********'; // Masked to indicate it's loaded securely
+      }
+    }
+  } catch (err) {
+    // silently fail and fallback to placeholders
+  }
+});
+</script>
+
+</body>
+</html>
